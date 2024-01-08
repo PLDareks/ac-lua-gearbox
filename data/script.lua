@@ -55,17 +55,19 @@ local driveModeButtonDown = ac.ControlButton(prefix .. "DRIVE_MODE" .. postfixDo
 local driveModeButtonUp = ac.ControlButton(prefix .. "DRIVE_MODE" .. postfixUp)
 
 local driveModeButtonMPS = {}
-for i = 1, 3 do
-	driveModeButtonMPS[i] = ac.ControlButton(prefix .. "DRIVE_MODE" .. "_" .. i)
+-- Starting at 2 so that the drivemodes line up with the GearboxDriveModes
+for i = 2, 4 do
+	driveModeButtonMPS[i] = ac.ControlButton(prefix .. "DRIVE_MODE" .. "_" .. i - 1)
 end
 
 local reverseGearButton = ac.ControlButton(prefix .. "REVERSE_GEAR")
 local neutralGearButton = ac.ControlButton(prefix .. "NEUTRAL_GEAR")
 local manualModeButton = ac.ControlButton(prefix .. "MANUAL_MODE")
-local launchControlButton = ac.ControlButton(prefix .. "MANUAL_MODE")
+local launchControlActiveButton = ac.ControlButton(prefix .. "LAUNCH_CONTROL_ACTIVE")
+local launchControlDownButton = ac.ControlButton(prefix .. "LAUNCH_CONTROL_DN")
+local launchControlUpButton = ac.ControlButton(prefix .. "LAUNCH_CONTROL_UP")
 
 -- Locals - General
-
 local is_car_script = (ac.accessCarPhysics ~= nil)
 ac.log("is_car_script: " .. (is_car_script and "true" or "false"))
 
@@ -101,12 +103,6 @@ local stock_final_drive = 2.56 -- take the value from "your car / drivetrain.ini
 
 -- Locals - Gearbox Driving Modes
 
-local gearbox_valve_normal = false
-local gearbox_valve_sport = false
-local gearbox_valve_track = false
-local gearbox_valve_neutral = false
-local gearbox_valve_manual = false
-local gearbox_valve_reverse = false
 local gearbox_valve_1 = false
 local gearbox_valve_2 = false
 local gearbox_valve_overdrive = false
@@ -114,6 +110,23 @@ local autoShift = ac.autoShift
 local throttle_mode_normal = false
 local throttle_mode_sport = false
 local throttle_mode_race = false
+
+---@alias GearboxDriveModes
+---| `GearboxDriveModes.Reverse` @Value: 0.
+---| `GearboxDriveModes.Neutral` @Value: 1.
+---| `GearboxDriveModes.Normal` @Value: 2.
+---| `GearboxDriveModes.Sport` @Value: 3.
+---| `GearboxDriveModes.Track` @Value: 4.
+local GearboxDriveModes = {
+	Reverse = 0,
+	Neutral = 1,
+	Normal = 2,
+	Sport = 3,
+	Track = 4,
+}
+
+local gearbox_valve = GearboxDriveModes.Neutral
+local gearbox_valve_manual = false
 
 -- Locals - Chassis Driving Modes
 
@@ -133,6 +146,11 @@ local clutch_min = 0
 local clutch_max = 0
 local clutch_on = false
 local clutch_off = false
+
+-- Locals - Debug
+local ptratio = (car.drivetrainPower * throttle)
+local ttratio = (car.drivetrainTorque * throttle)
+local speed_mph = speed / 1.60934
 
 ------------------------------------------------------------------------------------------------------------------
 
@@ -202,9 +220,107 @@ local function _gear(n, t)
 end
 
 ------------------------------------------------------------------------------------------------------------------
+
+local function setGearboxDriveModeNormal()
+	gearbox_valve = GearboxDriveModes.Normal
+	throttle_mode_normal = true
+	ac.debug("Car Gearbox Mode", "Normal")
+	ac.debug("Throttle Mode", "Normal")
+	--ac.setMessage('Normal mode engaged.')
+end
+
+local function setGearboxDriveModeSport()
+	gearbox_valve = GearboxDriveModes.Sport
+	throttle_mode_sport = true
+	ac.debug("Car Gearbox Mode", "Sport")
+	ac.debug("Throttle Mode", "Sport")
+	--ac.setMessage('Normal mode engaged.')
+end
+
+local function setGearboxDriveModeTrack()
+	gearbox_valve = GearboxDriveModes.Track
+	ac.debug("Car Gearbox Mode", "Track")
+	--ac.setMessage('Race mode engaged.')
+end
+
+-- Reverse Mode
+reverseGearButton:onPressed(function()
+	if car.speedKmh < 1 or car.gear == -1 and car.speedKmh < 1 then
+		gearbox_valve = GearboxDriveModes.Reverse
+	end
+end)
+
+-- Neutral Mode
+neutralGearButton:onPressed(function()
+	if car.speedKmh < 1 or car.speedKmh < 1 and data.requestedGearIndex == 1 then
+		gearbox_valve = GearboxDriveModes.Neutral
+	end
+end)
+
+driveModeButtonDown:onPressed(function()
+	gearbox_valve = gearbox_valve - 1
+
+	if gearbox_valve < GearboxDriveModes.Normal then
+		gearbox_valve = GearboxDriveModes.Track
+	end
+
+	if gearbox_valve == GearboxDriveModes.Normal then
+		setGearboxDriveModeNormal()
+	elseif gearbox_valve == GearboxDriveModes.Sport then
+		setGearboxDriveModeSport()
+	elseif gearbox_valve == GearboxDriveModes.Track then
+		setGearboxDriveModeTrack()
+	end
+end)
+
+driveModeButtonUp:onPressed(function()
+	gearbox_valve = gearbox_valve + 1
+
+	if gearbox_valve > GearboxDriveModes.Track then
+		gearbox_valve = GearboxDriveModes.Normal
+	end
+
+	if gearbox_valve == GearboxDriveModes.Normal then
+		setGearboxDriveModeNormal()
+	elseif gearbox_valve == GearboxDriveModes.Sport then
+		setGearboxDriveModeSport()
+	elseif gearbox_valve == GearboxDriveModes.Track then
+		setGearboxDriveModeTrack()
+	end
+end)
+
+-- Normal Mode
+driveModeButtonMPS[GearboxDriveModes.Normal]:onPressed(function()
+	setGearboxDriveModeNormal()
+end)
+
+-- Sport Mode
+driveModeButtonMPS[GearboxDriveModes.Sport]:onPressed(function()
+	setGearboxDriveModeSport()
+end)
+
+-- Track Mode
+driveModeButtonMPS[GearboxDriveModes.Track]:onPressed(function()
+	setGearboxDriveModeTrack()
+end)
+
+-- Manual Mode
+manualModeButton:onPressed(function()
+	if gearbox_valve_manual == true then
+		gearbox_valve_manual = false
+		ac.debug("Car Gearbox Manual", "No")
+		return
+	end
+
+	if gearbox_valve ~= GearboxDriveModes.Reverse and gearbox_valve ~= GearboxDriveModes.Neutral then
+		gearbox_valve_manual = true
+		ac.debug("Car Gearbox Manual", "Yes")
+	end
+end)
+
+------------------------------------------------------------------------------------------------------------------
 function script.update(dt)
 	------------------------------------------------------------------------------------------------------------------
-
 	-- Debugging
 	bug("! Running", " ")
 
@@ -220,10 +336,9 @@ function script.update(dt)
 	end
 
 	--Debug
-	local car = ac.getCar(0)
-	local ptratio = (car.drivetrainPower * throttle)
-	local ttratio = (car.drivetrainTorque * throttle)
-	local speed_mph = speed / 1.60934
+	ptratio = (car.drivetrainPower * throttle)
+	ttratio = (car.drivetrainTorque * throttle)
+	speed_mph = speed / 1.60934
 	ac.debug("Car Wheel Power", ptratio)
 	ac.debug("Car Wheel Torque", ttratio)
 	ac.debug("Car Speed KMH", speed)
@@ -256,7 +371,7 @@ function script.update(dt)
 	-- Throttle map
 
 	-- normal
-	if throttle_mode_normal == true or gearbox_valve_reverse == true then
+	if throttle_mode_normal == true or gearbox_valve == GearboxDriveModes.Reverse then
 		if logic_gear_dn == 0 or logic_gear_up == 0 then
 			if throttle >= 0 then
 				data.gas = 0 + interpolate(0, 0.1, throttle, 0, 0.12)
@@ -382,7 +497,7 @@ function script.update(dt)
 	--_target((-0.05 * fast_drop))
 
 	--target limiting
-	if gearbox_valve_normal == true or gearbox_valve_reverse == true then
+	if gearbox_valve == GearboxDriveModes.Normal or gearbox_valve == GearboxDriveModes.Reverse then
 		if logic_gear_dn == 0 or logic_gear_up == 0 then
 			if throttle >= 0 then
 				target_max = 0 + interpolate(0, 0.1, throttle, 10, 10)
@@ -417,7 +532,7 @@ function script.update(dt)
 		elseif logic_gear_dn > 0 or logic_gear_up > 0 then
 			throttle = throttle
 		end
-	elseif gearbox_valve_sport == true then
+	elseif gearbox_valve == GearboxDriveModes.Sport then
 		if logic_gear_dn == 0 or logic_gear_up == 0 then
 			if throttle >= 0 then
 				target_max = 0 + interpolate(0, 0.1, throttle, 50, 55)
@@ -465,22 +580,22 @@ function script.update(dt)
 		target_max = 100 * interpolate(0.25, 1, braking, 0, 1)
 	end
 
-	if gearbox_valve_reverse == true then
+	if gearbox_valve == GearboxDriveModes.Reverse then
 		target = math.clamp(target, 100, 100)
 		target_max = math.clamp(target, 100, 100)
-	elseif gearbox_valve_neutral == true then
+	elseif gearbox_valve == GearboxDriveModes.Neutral then
 		target = math.clamp(target, 100, 100)
 		target_max = math.clamp(target, 100, 100)
-	elseif gearbox_valve_normal == true then
+	elseif gearbox_valve == GearboxDriveModes.Normal then
 		target = math.clamp(target, 10, 100)
 		target_max = math.clamp(target, 10, 100)
-	elseif gearbox_valve_sport == true then
+	elseif gearbox_valve == GearboxDriveModes.Sport then
 		target = math.clamp(target, 50, 100)
 		target_max = math.clamp(target, 50, 100)
-	elseif gearbox_valve_track == true then
+	elseif gearbox_valve == GearboxDriveModes.Track then
 		target = math.clamp(target, 95, 100)
 		target_max = math.clamp(target, 95, 100)
-	elseif gearbox_valve_manual == true then
+	elseif gearbox_valve == GearboxDriveModes.Manual then
 		target = math.clamp(target, 0, 100)
 		target_max = math.clamp(target, 0, 100)
 	end
@@ -523,7 +638,7 @@ function script.update(dt)
 	-- Use this to tweak shift point for each gear
 	-- Limiter has to be negative on higher gears bcuz the higher the gear, the lower shift point is if limiter is set to static value
 
-	if gearbox_valve_normal == true then
+	if gearbox_valve == GearboxDriveModes.Normal then
 		if car.gear == 1 then
 			limiter = 6 / 100
 		elseif car.gear > 1 then
@@ -531,7 +646,7 @@ function script.update(dt)
 		end
 	end
 
-	if gearbox_valve_sport == true or gearbox_valve_track == true then
+	if gearbox_valve == GearboxDriveModes.Sport or gearbox_valve == GearboxDriveModes.Track then
 		if car.gear == 1 then
 			limiter = 8 / 100
 		elseif car.gear > 1 then
@@ -666,137 +781,8 @@ function script.update(dt)
 
 	-- Gearbox Driving Modes
 
-	-- Reverse Gear
-	if ac.isKeyDown(16) and ac.isKeyDown(49) and car.speedKmh < 1 or car.gear == -1 and car.speedKmh < 1 then
-		gearbox_valve_reverse = true
-		gearbox_valve_neutral = false
-		gearbox_valve_normal = false
-		gearbox_valve_sport = false
-		gearbox_valve_track = false
-		gearbox_valve_manual = false
-	end
-	if gearbox_valve_reverse == true then
-		ac.autoShift = false
-		--ac.setMessage('Reverse gear engaged.')
-		target = math.clamp(target, 100, 100)
-		--ac.isShifterSupported = 1
-		data.requestedGearIndex = 0
-		ac.debug("Car Gearbox Mode", "R")
-	end
-	if gearbox_valve_reverse == true then
-		if ac.isControllerGearUpPressed() or not ac.isControllerGearUpPressed() then
-			data.gearUp = false
-		end
-		if ac.isControllerGearDownPressed() or not ac.isControllerGearDownPressed() then
-			data.gearDown = false
-		end
-	end
-
-	-- Neutral Gear
-	if
-		ac.isKeyDown(16) and ac.isKeyDown(50) and car.speedKmh < 1
-		or car.speedKmh < 1 and data.requestedGearIndex == 1
-		or gearbox_valve_reverse == false
-			and gearbox_valve_normal == false
-			and gearbox_valve_sport == false
-			and gearbox_valve_track == false
-	then
-		gearbox_valve_reverse = false
-		gearbox_valve_neutral = true
-		gearbox_valve_normal = false
-		gearbox_valve_sport = false
-		gearbox_valve_track = false
-		gearbox_valve_manual = false
-	end
-	if gearbox_valve_neutral == true then
-		ac.autoShift = true
-		--ac.setMessage('Neutral gear engaged.')
-		data.gas = throttle * interpolate(1000, 4500, car.rpm, 1, 0.0)
-		ac.isShifterSupported = 1
-		data.requestedGearIndex = 1
-		ac.debug("Car Gearbox Mode", "N")
-		if not car.gear == 0 then
-			data.requestedGearIndex = (data.gear - data.gear) + 2
-		end
-		if car.speedKmh >= 0 and logic_gear_dn > 0 and logic_gear_up > 0 then
-			data.gas = throttle * interpolate(1000, 4500, car.rpm, 1, 1)
-		end
-		--else
-		--data.rpm = data.rpm * 0
-	end
-
-	-- Normal Mode
-	if ac.isKeyDown(16) and ac.isKeyDown(51) then
-		gearbox_valve_reverse = false
-		gearbox_valve_neutral = false
-		gearbox_valve_normal = true
-		gearbox_valve_sport = false
-		gearbox_valve_track = false
-		--gearbox_valve_manual = false
-	end
-	if gearbox_valve_normal == true then
-		ac.autoShift = true
-		ac.debug("Car Gearbox Mode", "Normal")
-		ac.debug("Throttle Mode", "Normal")
-		throttle_mode_normal = true
-		--ac.setMessage('Normal mode engaged.')
-		if car.gear < 1 then
-			data.requestedGearIndex = (data.gear - data.gear) + 2
-		end
-	end
-
-	-- Sport Mode
-	if ac.isKeyDown(16) and ac.isKeyDown(52) then
-		gearbox_valve_reverse = false
-		gearbox_valve_neutral = false
-		gearbox_valve_normal = false
-		gearbox_valve_sport = true
-		gearbox_valve_track = false
-		--gearbox_valve_manual = false
-	end
-	if gearbox_valve_sport == true then
-		ac.autoShift = true
-		ac.debug("Car Gearbox Mode", "Sport")
-		ac.debug("Throttle Mode", "Sport")
-		throttle_mode_sport = true
-		--ac.setMessage('Normal mode engaged.')
-		if car.gear < 1 then
-			data.requestedGearIndex = (data.gear - data.gear) + 2
-		end
-	end
-
-	-- Track Mode
-	if ac.isKeyDown(16) and ac.isKeyDown(53) then
-		gearbox_valve_reverse = false
-		gearbox_valve_neutral = false
-		gearbox_valve_normal = false
-		gearbox_valve_sport = false
-		gearbox_valve_track = true
-		--gearbox_valve_manual = false
-	end
-	if gearbox_valve_track == true then
-		ac.autoShift = true
-		ac.debug("Car Gearbox Mode", "Track")
-		--ac.setMessage('Race mode engaged.')
-		if car.gear < 1 then
-			data.requestedGearIndex = (data.gear - data.gear) + 2
-		end
-	end
-
-	-- Manual Mode
-	if gearbox_valve_normal == true or gearbox_valve_sport == true or gearbox_valve_track == true then
-		if ac.isKeyDown(16) and ac.isKeyDown(54) then
-			--gearbox_valve_reverse = false
-			--gearbox_valve_neutral = false
-			--gearbox_valve_normal = false
-			--gearbox_valve_sport = false
-			--gearbox_valve_track = false
-			gearbox_valve_manual = true
-		end
-	end
 	if gearbox_valve_manual == true then
 		ac.autoShift = false
-		ac.debug("Car Gearbox Manual", "Yes")
 		if car.gear < 1 then
 			data.requestedGearIndex = (data.gear - data.gear) + 2
 		end
@@ -807,12 +793,45 @@ function script.update(dt)
 		if (car.rpm < 1100) and car.gear >= 2 then
 			ac.autoShift = true
 		end
-	else
-		ac.debug("Car Gearbox Manual", "No")
-	end
-	if gearbox_valve_manual == true then
-		if ac.isKeyDown(162) and ac.isKeyDown(54) then
-			gearbox_valve_manual = false
+	elseif gearbox_valve == GearboxDriveModes.Track then
+		ac.autoShift = true
+		if car.gear < 1 then
+			data.requestedGearIndex = (data.gear - data.gear) + 2
+		end
+	elseif gearbox_valve == GearboxDriveModes.Sport then
+		ac.autoShift = true
+		if car.gear < 1 then
+			data.requestedGearIndex = (data.gear - data.gear) + 2
+		end
+	elseif gearbox_valve == GearboxDriveModes.Normal then
+		ac.autoShift = true
+		if car.gear < 1 then
+			data.requestedGearIndex = (data.gear - data.gear) + 2
+		end
+	elseif gearbox_valve == GearboxDriveModes.Neutral then
+		ac.autoShift = true
+		data.gas = throttle * interpolate(1000, 4500, car.rpm, 1, 0.0)
+		ac.isShifterSupported = 1
+		data.requestedGearIndex = 1
+		if not car.gear == 0 then
+			data.requestedGearIndex = (data.gear - data.gear) + 2
+		end
+		if car.speedKmh >= 0 and logic_gear_dn > 0 and logic_gear_up > 0 then
+			data.gas = throttle * interpolate(1000, 4500, car.rpm, 1, 1)
+		end
+		--else
+		--data.rpm = data.rpm * 0
+	elseif gearbox_valve == GearboxDriveModes.Reverse then
+		ac.autoShift = false
+		target = math.clamp(target, 100, 100)
+		--ac.isShifterSupported = 1
+		data.requestedGearIndex = 0
+
+		if ac.isControllerGearUpPressed() or not ac.isControllerGearUpPressed() then
+			data.gearUp = false
+		end
+		if ac.isControllerGearDownPressed() or not ac.isControllerGearDownPressed() then
+			data.gearDown = false
 		end
 	end
 
@@ -896,13 +915,7 @@ function script.update(dt)
 
 	-- Launch Control
 
-	if
-		ac.isKeyDown(76)
-		and ac.isKeyDown(16)
-		and car.speedKmh < 1
-		and car.gear == 1
-		and car.tractionControlModes > 0
-	then
+	if launchControlActiveButton:down() and car.speedKmh < 1 and car.gear == 1 and car.tractionControlModes > 0 then
 		lc_counter = lc_counter + dt
 	else
 		lc_counter = 0
@@ -910,7 +923,10 @@ function script.update(dt)
 
 	if lc_counter >= 1 then
 		launch_control_on = 1
-		ac.setMessage("Launch Control is ON. Push brake and gas pedals.", "You can use arrows to change launch RPMs.")
+		ac.setMessage(
+			"Launch Control is ON. Push brake and gas pedals.",
+			"You can use the Launch Control Adjustment buttons to change launch RPMs."
+		)
 	elseif car.speedKmh >= launch_control_speed then
 		launch_control_on = 0
 		launch_control_speed = 38
@@ -933,16 +949,18 @@ function script.update(dt)
 	end
 
 	if launch_control_ready == 1 then
-		if ac.isKeyPressed(38) then
+		if launchControlUpButton:pressed() then
 			launch_control_rpm = launch_control_rpm + 100
 			launch_control_speed = launch_control_speed + 0.9
+			ac.setSystemMessage("Launch Control", "RPM: " .. launch_control_rpm .. " | Speed: " .. launch_control_speed)
 		elseif launch_control_rpm > 5500 and launch_control_speed > 52 then
 			launch_control_rpm = 5500
 			launch_control_speed = 52
 		end
-		if ac.isKeyPressed(40) then
+		if launchControlDownButton:pressed() then
 			launch_control_rpm = launch_control_rpm - 100
 			launch_control_speed = launch_control_speed - 0.9
+			ac.setSystemMessage("Launch Control", "RPM: " .. launch_control_rpm .. " | Speed: " .. launch_control_speed)
 		elseif launch_control_rpm < 2500 and launch_control_speed < 25 then
 			launch_control_rpm = 2500
 			launch_control_speed = 25
@@ -968,7 +986,6 @@ function script.update(dt)
 
 	-- Handbrake AutoHold - used in cars with electric handbrake
 
-	local data = ac.accessCarPhysics()
 	if car.speedKmh < 1 then
 		data.handbrake = 0 + interpolate(1, 2, car.speedKmh, 0.5, 0)
 	end
